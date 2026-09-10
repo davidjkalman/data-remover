@@ -27,6 +27,7 @@ dr due --draft           # who blew their deadline, with the follow-up ready
 dr escalate 1            # regulator complaint, pre-filled
 dr recheck               # who is due for a re-search
 dr verify                # do the opt-out URLs still resolve?
+dr import-registry       # bulk-add the 549 CA-registered brokers
 dr report --out out.md   # a paper trail
 ```
 
@@ -113,6 +114,52 @@ get away from.
 - **Deadlines are real.** CCPA is 45 days; GDPR is 30. `dr due` tracks them and
   `dr escalate` writes the complaint. Brokers respond very differently to a
   request that cites a statute and names the regulator.
+
+## Getting to 549 brokers: `dr import-registry`
+
+Every data broker doing business in California must register with the CPPA
+(AB 1202, extended by the DELETE Act), and the state publishes the whole list
+as a CSV. That makes catalog breadth a download rather than years of curation.
+
+```bash
+dr import-registry --dry-run --show 10   # look before you leap
+dr import-registry                       # ~537 new on top of the curated 45
+dr brokers --source ca-registry --todo
+```
+
+The registry is authoritative about **who** the brokers are and rough about
+everything else, so the import reports its own confidence rather than implying
+certainty:
+
+```
+   152  URL matched an opt-out keyword
+   160  single URL in the cell
+    14  first of several URLs - unverified guess
+   211  no URL; email channel only
+```
+
+What the parser does with the mess:
+
+- **Emails are obfuscated** (`privacy [at] example.com`) — de-obfuscated.
+- **The opt-out column is free text**, often an entire privacy policy pasted
+  into a cell. A URL whose path mentions opting out beats the first URL found,
+  because the first one is usually the policy the text was copied from.
+- **No URL means no guess.** The broker becomes an email-channel entry rather
+  than getting a link fabricated from its website column.
+- **Dedupe is by domain, not name** — registrants love a trading name, and
+  "Exponential Interactive, Inc. doing business as VDX.tv" should not become a
+  second copy of a broker you already have. Re-running the import is a no-op.
+- **Imports land at tier 3.** The registry is mostly ad-tech, not
+  people-search; those matter, but not ahead of sites publishing your home
+  address. `--tier` overrides.
+
+Expect roughly a quarter of the imported URLs to be dead on arrival — the
+registry is a legal filing, not a maintained link directory. Sweep them before
+working through them:
+
+```bash
+dr verify --source ca-registry
+```
 
 ## Catalog accuracy: `dr verify`
 

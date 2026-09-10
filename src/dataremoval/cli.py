@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
-from . import catalog, db, laws, templates, verify
+from . import catalog, db, laws, registry, templates, verify
 from .profile import Profile, summary, write_template
 
 HOME = Path(os.environ.get("DR_HOME", Path.home() / ".dataremoval"))
@@ -176,6 +176,9 @@ def cmd_brokers(args) -> None:
     if args.method:
         sql += " AND b.method = ?"
         params.append(args.method)
+    if args.source:
+        sql += " AND b.source = ?"
+        params.append(args.source)
     sql += " ORDER BY b.tier, b.name"
     rows = conn.execute(sql, params).fetchall()
     if args.todo:
@@ -567,12 +570,122 @@ def cmd_open(args) -> None:
         webbrowser.open(b["optout_url"])
 
 
+
+def cmd_import_registry(args) -> None:
+    """Bulk-import the California data broker registry.
+
+    Registration is mandatory for brokers doing business in California, so this
+    is the authoritative list of who they are. It is *not* authoritative about
+    opt-out URLs - see the confidence breakdown it prints.
+    """
+    conn = open_db()
+    db.migrate(conn)
+
+    src = Path(args.file) if args.file else None
+    print(f"Reading {src if src else args.url}...")
+    try:
+        entries = registry.load(src, args.url)
+    except (OSError, ValueError) as e:
+        sys.exit(f"Could not read the registry: {e}")
+    print(f"{len(entries)} registrants.\n")
+
+    # Dedupe on domain, not name: 'Intelius' and 'PeopleConnect Inc.' are one
+    # submission target, and registrants love a trading name.
+    # One domain can map to several catalog entries - an alias like `anywho`
+    # points at Spokeo's form, so both carry domain spokeo.com. Prefer the entry
+    # that actually *is* the domain, and be deterministic about ties, so the
+    # match we report is the one a human would name.
+    existing_dom: Dict[str, str] = {}
+    for r in conn.execute(
+        "SELECT key, domain FROM broker WHERE domain IS NOT NULL ORDER BY key"
+    ).fetchall():
+        dom, key = r["domain"], r["key"]
+        held = existing_dom.get(dom)
+        if held is None or (key in dom and held not in dom):
+            existing_dom[dom] = key
+    existing_keys = {
+        r["key"] for r in conn.execute("SELECT key FROM broker").fetchall()
+    }
+
+    new, dupes, keyless = [], [], []
+    for e in entries:
+        if e.domain and e.domain in existing_dom:
+            dupes.append((e, existing_dom[e.domain]))
+        elif e.key in existing_keys:
+            dupes.append((e, e.key))
+        elif not e.domain:
+            keyless.append(e)
+        else:
+            new.append(e)
+
+    if args.limit:
+        new = new[: args.limit]
+
+    with_url = sum(1 for e in new if e.optout_url)
+    confident = sum(1 for e in new if e.optout_url and "keyword" in e.url_basis)
+    unverified = sum(1 for e in new if e.optout_url and "unverified" in e.url_basis)
+
+    print(f"  {len(new):>4}  new")
+    print(f"  {len(dupes):>4}  already covered (matched on domain)")
+    if keyless:
+        print(f"  {len(keyless):>4}  skipped - no usable website domain")
+    print()
+    print("  Opt-out URL confidence for the new ones:")
+    print(f"    {confident:>4}  URL matched an opt-out keyword")
+    print(f"    {with_url - confident - unverified:>4}  single URL in the cell")
+    print(f"    {unverified:>4}  first of several URLs - unverified guess")
+    print(f"    {len(new) - with_url:>4}  no URL; email channel only")
+
+    if args.show:
+        print("\n  Sample:")
+        for e in new[: args.show]:
+            print(f"    {e.key:<28} {e.name[:38]:<40} {e.optout_url or '(email)'}")
+
+    if dupes and args.show:
+        print("\n  Already covered:")
+        for e, key in dupes[: args.show]:
+            print(f"    {e.name[:40]:<42} -> {key}")
+
+    if args.dry_run:
+        print("\nDry run - nothing written. Re-run without --dry-run to import.")
+        return
+
+    if not new:
+        print("\nNothing to import.")
+        return
+
+    brokers = [e.as_broker(tier=args.tier, recheck_days=args.recheck_days) for e in new]
+    inserted = 0
+    for e, b in zip(new, brokers):
+        conn.execute(
+            "INSERT INTO broker(key,name,tier,method,optout_url,email,requires,"
+            "recheck_days,feeds,notes,source,domain) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (b["key"], b["name"], b["tier"], b["method"], b["optout_url"], b["email"],
+             b["requires"], b["recheck_days"], b["feeds"], b["notes"],
+             "ca-registry", e.domain),
+        )
+        inserted += 1
+    log_event(conn, None, "note",
+              f"imported {inserted} brokers from the CA registry "
+              f"({len(dupes)} already covered)")
+    conn.commit()
+
+    total = conn.execute("SELECT COUNT(*) c FROM broker WHERE active=1").fetchone()["c"]
+    print(f"\nImported {inserted}. Catalog is now {total} brokers.")
+    print("\nThese are unverified by definition - the registry's opt-out column is")
+    print("free text. Check the links before working through them:")
+    print(f"  dr verify --source ca-registry        # {inserted} URLs, paced")
+    print("  dr brokers --source ca-registry --todo")
+
+
 def cmd_verify(args) -> None:
     """Read-only sweep of opt-out URLs. Submits nothing."""
     conn = open_db()
     db.migrate(conn)
 
-    sql = "SELECT key, name, optout_url, verify_at, verify_status FROM broker WHERE active = 1"
+    sql = ("SELECT key, name, optout_url, verify_at, verify_status FROM broker "
+           "WHERE active = 1")
     params: List = []
     if args.broker:
         marks = ",".join("?" * len(args.broker))
@@ -583,6 +696,9 @@ def cmd_verify(args) -> None:
     if args.tier:
         sql += " AND tier = ?"
         params.append(args.tier)
+    if args.source:
+        sql += " AND source = ?"
+        params.append(args.source)
     sql += " ORDER BY tier, name"
     rows = conn.execute(sql, params).fetchall()
 
@@ -804,6 +920,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tier", type=int, choices=[1, 2, 3])
     p.add_argument("--method", choices=["form", "email", "account", "mail"])
     p.add_argument("--todo", action="store_true", help="only ones with no request yet")
+    p.add_argument("--source", help="catalog | ca-registry")
     p.set_defaults(func=cmd_brokers)
 
     p = sub.add_parser("queue", help="what to do next, highest leverage first")
@@ -867,10 +984,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--print-only", action="store_true")
     p.set_defaults(func=cmd_open)
 
+    p = sub.add_parser("import-registry",
+                       help="bulk-import the California data broker registry")
+    p.add_argument("--file", help="read a local CSV instead of fetching")
+    p.add_argument("--url", default=registry.REGISTRY_URL)
+    p.add_argument("--dry-run", action="store_true", dest="dry_run",
+                   help="report what would be imported and write nothing")
+    p.add_argument("--tier", type=int, default=3, choices=[1, 2, 3],
+                   help="tier for imported brokers (default 3)")
+    p.add_argument("--recheck-days", type=int, default=365, dest="recheck_days")
+    p.add_argument("--limit", type=int, help="import at most N new brokers")
+    p.add_argument("--show", type=int, default=0, metavar="N",
+                   help="list N examples of what was matched")
+    p.set_defaults(func=cmd_import_registry)
+
     p = sub.add_parser("verify", help="check opt-out URLs still resolve (read-only)")
     p.add_argument("broker", nargs="*", help="specific brokers; default is unchecked/stale ones")
     p.add_argument("--all", action="store_true", help="re-check every broker")
     p.add_argument("--tier", type=int, choices=[1, 2, 3])
+    p.add_argument("--source", help="only brokers from this source (catalog | ca-registry)")
     p.add_argument("--apply", action="store_true", help="adopt redirect targets into the catalog")
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--timeout", type=float, default=15.0)

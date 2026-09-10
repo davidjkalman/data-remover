@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_TABLES = """
 CREATE TABLE IF NOT EXISTS broker (
@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS broker (
     verify_status TEXT,                        -- ok|moved|notfound|botwall|soft404|error
     verify_at     TEXT,
     verify_url    TEXT,                        -- URL actually landed on after redirects
-    verify_note   TEXT
+    verify_note   TEXT,
+    source        TEXT NOT NULL DEFAULT 'catalog',   -- catalog | ca-registry
+    domain        TEXT                               -- for dedupe across sources
 );
 
 CREATE TABLE IF NOT EXISTS request (
@@ -65,6 +67,8 @@ CREATE INDEX IF NOT EXISTS idx_request_status ON request(status);
 CREATE INDEX IF NOT EXISTS idx_event_request  ON event(request_id);
 CREATE INDEX IF NOT EXISTS idx_event_at       ON event(at);
 CREATE INDEX IF NOT EXISTS idx_event_broker   ON event(broker_key);
+CREATE INDEX IF NOT EXISTS idx_broker_domain  ON broker(domain);
+CREATE INDEX IF NOT EXISTS idx_broker_source  ON broker(source);
 """
 
 # Kept for callers that want the whole thing at once (tests, docs).
@@ -96,6 +100,10 @@ MIGRATIONS = {
     ],
     3: [
         "ALTER TABLE event ADD COLUMN broker_key TEXT",
+    ],
+    4: [
+        "ALTER TABLE broker ADD COLUMN source TEXT NOT NULL DEFAULT 'catalog'",
+        "ALTER TABLE broker ADD COLUMN domain TEXT",
     ],
 }
 

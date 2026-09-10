@@ -1,11 +1,12 @@
 # Backlog
 
-Current state: 45 brokers, request generation, deadline tracking, link
-verification, audit log. 53 tests. Works end to end for a single subject.
+Current state: **582 brokers**, request generation, deadline tracking, link
+verification, audit log, registry import. 71 tests. Works end to end for a
+single subject.
 
-**Done:** 12 (packaging), 13 (rate limiting + resumable sweeps),
-`dr history` (audit trail, not originally on this list).
-**Next up:** 1 — `dr import-registry`, now unblocked.
+**Done:** 1 (registry import), 12 (packaging), 13 (rate limiting + resumable
+sweeps), `dr history` (audit trail, not originally on this list).
+**Next up:** 4 (inbox integration) or 6 (`dr open --batch`) — see below.
 
 Ordered by leverage, not by effort. The rationale for each is the part worth
 arguing with — the estimates are guesses.
@@ -15,9 +16,12 @@ arguing with — the estimates are guesses.
 ## The one number that matters
 
 **Coverage.** Everything here is downstream of "what fraction of the sites
-holding your data have you actually reached?" We are at 45. DeleteMe claims
-~750. The California registry lists **549 legally registered brokers**, and
-that gap is the product.
+holding your data have you actually reached?" We were at 45; the registry
+import took us to **582**, which is in DeleteMe's league (~750 claimed).
+
+Coverage is now a *reach* problem rather than a *catalog* problem: 582 known
+brokers, 0 requests sent. That moves the bottleneck squarely onto items 4 and
+6 — the throughput of actually submitting.
 
 Second-order: **stick rate** — of those reached, how many stay gone after 12
 months. We can't measure it yet (see P1-3).
@@ -26,7 +30,26 @@ months. We can't measure it yet (see P1-3).
 
 ## P0 — Catalog breadth
 
-### 1. `dr import-registry` — bulk-import the CA CPPA registry
+### ~~1. `dr import-registry`~~ — **done**
+537 new brokers imported (549 registrants, 12 already covered), taking the
+catalog to 582. Everything anticipated in the write-up below turned out to be
+real: emails 100% obfuscated, 48% of opt-out cells longer than 200 chars, and
+the keyword-preferring URL heuristic changes the answer in 13 cases — including
+Oracle, where the first URL is a marketing-cloud policy page and the right one
+is `datacloudoptout.oracle.com`.
+
+Two things learned in the doing:
+- **211 of 537 rows have no usable opt-out URL at all.** Those became
+  email-channel brokers. A statutory request by email is legally equivalent, so
+  this is a real path, not a degraded one.
+- **~25% of the imported URLs are already dead** on a sample sweep (10 of ~43
+  checked returned 404/soft-404). The registry is a legal filing, not a
+  maintained link directory, and `dr verify --source ca-registry` is now a
+  required follow-up rather than a nicety.
+
+Original write-up follows for context.
+
+### 1a. (original) bulk-import the CA CPPA registry
 **12x the catalog in one command.** `complete-reg-data-brokers.csv` at
 cppa.ca.gov: 549 rows, columns for name, email, website, physical address,
 opt-out instructions, and date registered. Verified fetchable and parseable

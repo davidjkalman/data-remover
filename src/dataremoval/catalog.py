@@ -99,5 +99,16 @@ def sync(conn: sqlite3.Connection, brokers: List[Dict[str, Any]]) -> Dict[str, i
                 values[1:] + (b["key"],),
             )
             updated += 1
+
+    # Domains let the registry import dedupe against curated entries. Derived
+    # rather than authored, so it is refreshed on every sync.
+    from .registry import registrable_domain
+
+    for r in conn.execute("SELECT key, optout_url, email FROM broker").fetchall():
+        dom = registrable_domain(r["optout_url"]) or registrable_domain(
+            (r["email"] or "").split("@")[-1] if r["email"] else ""
+        )
+        conn.execute("UPDATE broker SET domain=? WHERE key=?", (dom or None, r["key"]))
+
     conn.commit()
     return {"added": added, "updated": updated}
