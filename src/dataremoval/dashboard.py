@@ -32,6 +32,7 @@ STATUS_GROUP = {
     "acknowledged": "inflight",
     "verification_required": "warn",
     "reappeared": "warn",
+    "partial": "warn",
     "rejected": "crit",
     "blocked": "wall",
 }
@@ -43,6 +44,7 @@ STATUS_LABEL = {
     "pending": "Not yet sent",
     "acknowledged": "Acknowledged",
     "verification_required": "Needs you to verify",
+    "partial": "Partly removed",
     "reappeared": "Re-listed",
     "rejected": "Refused",
     "blocked": "Blocked by site",
@@ -105,6 +107,18 @@ def collect(conn: sqlite3.Connection, profile: Profile, today: Optional[date] = 
             "ref": r["confirmation"] or "",
         })
 
+    listings = conn.execute(
+        "SELECT request_id, status FROM listing"
+    ).fetchall()
+    by_req: Dict[int, Dict[str, int]] = {}
+    for l in listings:
+        d = by_req.setdefault(l["request_id"], {})
+        d[l["status"]] = d.get(l["status"], 0) + 1
+    for r in rows:
+        tal = by_req.get(r["id"], {})
+        r["listings_total"] = sum(tal.values())
+        r["listings_removed"] = tal.get("removed", 0)
+
     status_counts: Dict[str, int] = {}
     for r in rows:
         status_counts[r["status"]] = status_counts.get(r["status"], 0) + 1
@@ -138,7 +152,7 @@ def collect(conn: sqlite3.Connection, profile: Profile, today: Optional[date] = 
     attention = [r for r in rows if r["overdue"]]
     attention += [r for r in rows if r["status"] == "verification_required"
                   and not r["overdue"]]
-    attention += [r for r in rows if r["status"] in ("rejected", "reappeared")
+    attention += [r for r in rows if r["status"] in ("rejected", "reappeared", "partial")
                   and not r["overdue"]]
 
     due_soon = sorted(
@@ -163,6 +177,9 @@ def collect(conn: sqlite3.Connection, profile: Profile, today: Optional[date] = 
             "blocked": len([r for r in rows if r["status"] == "blocked"]),
             "curated": len([b for b in brokers if (b["source"] or "catalog") == "catalog"]),
             "registry": len([b for b in brokers if b["source"] == "ca-registry"]),
+            "partial": len([r for r in rows if r["status"] == "partial"]),
+            "listings": len(listings),
+            "listings_removed": len([l for l in listings if l["status"] == "removed"]),
         },
         "status_counts": status_counts,
         "verify_counts": verify_counts,
@@ -380,6 +397,10 @@ def render(d: Dict[str, Any]) -> str:
          f'{pct}% of the catalog has heard from you', "", pct),
         ("Confirmed removed", f'{t["removed"]}',
          f'{removed_pct}% of the catalog', "is-good", None),
+    ] + ([
+        ("Listings cleared", f'{t["listings_removed"]}/{t["listings"]}',
+         f'{t["partial"]} broker(s) removed only some', "", None),
+    ] if t["listings"] else []) + [
         ("Past deadline", f'{t["overdue"]}',
          'statutory response window missed', "is-crit" if t["overdue"] else "", None),
         ("Blocked by site", f'{t["blocked"]}',
@@ -404,6 +425,12 @@ def render(d: Dict[str, Any]) -> str:
             elif r["status"] == "verification_required":
                 sev, num, why = "warn", "waiting on you", "Check the contact inbox for their link"
                 do = f'dr log {r["id"]} --status sent'
+            elif r["status"] == "partial":
+                left = r["listings_total"] - r["listings_removed"]
+                sev = "warn"
+                num = f'{left} of {r["listings_total"]} still up'
+                why = "They removed some listings and stopped"
+                do = f'dr listings {r["id"]}'
             elif r["status"] == "rejected":
                 sev, num, why = "crit", "refused", "They declined the request"
                 do = f'dr escalate {r["id"]}'
@@ -474,13 +501,18 @@ def render(d: Dict[str, Any]) -> str:
                 f'<td class="num">{_e(r["sent_at"]) or "&mdash;"}</td>'
                 f'<td class="num">{_e(r["due_at"]) or "&mdash;"}</td>'
                 f'<td class="num">{left}</td>'
+                f'<td class="num">'
+                + (f'{r["listings_removed"]}/{r["listings_total"]}'
+                   if r["listings_total"] else "&mdash;")
+                + '</td>'
                 f'<td class="key">{_e(r["ref"]) or "&mdash;"}</td></tr>'
             )
         table = (
             '<h2>Every request</h2><div class="scroll"><table><thead><tr>'
             '<th class="num">#</th><th>Broker</th><th class="num">Tier</th>'
             '<th>Status</th><th>Channel</th><th class="num">Sent</th>'
-            '<th class="num">Due</th><th class="num">Left</th><th>Ref</th>'
+            '<th class="num">Due</th><th class="num">Left</th>'
+            '<th class="num">Listings</th><th>Ref</th>'
             f'</tr></thead><tbody>{"".join(trs)}</tbody></table></div>'
         )
     else:

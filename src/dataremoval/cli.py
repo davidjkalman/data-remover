@@ -114,6 +114,76 @@ def log_event(
     )
 
 
+
+def add_listings(conn: sqlite3.Connection, rid: int, urls: List[str]) -> int:
+    """Record the specific listings a request is meant to clear."""
+    n = 0
+    for url in urls:
+        url = (url or "").strip()
+        if not url:
+            continue
+        try:
+            conn.execute(
+                "INSERT INTO listing(request_id, url, status, added_at) "
+                "VALUES(?,?,'present',?)",
+                (rid, url, TODAY().isoformat()),
+            )
+            n += 1
+        except sqlite3.IntegrityError:
+            pass  # already tracked; re-running --url is not an error
+    return n
+
+
+def listing_tally(conn: sqlite3.Connection, rid: int) -> Dict[str, int]:
+    rows = conn.execute(
+        "SELECT status, COUNT(*) c FROM listing WHERE request_id=? GROUP BY status",
+        (rid,),
+    ).fetchall()
+    tally = {s: 0 for s in db.LISTING_STATUSES}
+    for r in rows:
+        tally[r["status"]] = r["c"]
+    tally["total"] = sum(tally[s] for s in db.LISTING_STATUSES)
+    return tally
+
+
+def derive_status(conn: sqlite3.Connection, rid: int, current: str) -> Optional[str]:
+    """What the listings say the request's status should be.
+
+    Returns None when there are no listings to reason from - most brokers never
+    give you per-listing URLs, and silence is not evidence.
+    """
+    t = listing_tally(conn, rid)
+    if not t["total"]:
+        return None
+    if t["removed"] == t["total"]:
+        return "completed"
+    if t["removed"]:
+        return "partial"
+    # Nothing removed yet: leave whatever the request already says.
+    return None
+
+
+def sync_status_from_listings(conn: sqlite3.Connection, rid: int) -> Optional[str]:
+    row = conn.execute("SELECT status, broker_key FROM request WHERE id=?",
+                       (rid,)).fetchone()
+    want = derive_status(conn, rid, row["status"])
+    if not want or want == row["status"]:
+        return None
+    fields = "status=?"
+    params: List = [want]
+    if want == "completed":
+        fields += ", closed_at=?"
+        params.append(TODAY().isoformat())
+        rd = conn.execute("SELECT recheck_days FROM broker WHERE key=?",
+                          (row["broker_key"],)).fetchone()
+        fields += ", recheck_at=?"
+        params.append((TODAY() + timedelta(days=(rd["recheck_days"] if rd else 180))).isoformat())
+    params.append(rid)
+    conn.execute(f"UPDATE request SET {fields} WHERE id=?", params)
+    log_event(conn, rid, "status", f"{want} (derived from listings)")
+    return want
+
+
 def law_for(p: Profile) -> laws.Law:
     return laws.choose(p.residency_state, p.is_eu_resident)
 
@@ -257,7 +327,10 @@ def cmd_start(args) -> None:
     )
     rid = cur.lastrowid
     log_event(conn, rid, "status", "pending")
+    n = add_listings(conn, rid, args.url or [])
     conn.commit()
+    if n:
+        print(f"Tracking {n} listing(s) for this request.")
 
     print(f"Request #{rid} - {b['name']}  [{law.name}]")
     print("=" * 60)
@@ -315,6 +388,16 @@ def cmd_log(args) -> None:
         fields = ["status=?"]
         params: List = [args.status]
         if args.status == "completed":
+            t = listing_tally(conn, args.id)
+            if t["total"] and t["removed"] < t["total"] and not args.force:
+                sys.exit(
+                    f"#{args.id} still has {t['total'] - t['removed']} of {t['total']} "
+                    f"listing(s) up.\n"
+                    f"Marking it completed would overstate your coverage. Either:\n"
+                    f"  dr listing {args.id} --all --status removed   # they really are gone\n"
+                    f"  dr log {args.id} --status partial             # some are gone\n"
+                    f"  dr log {args.id} --status completed --force   # override"
+                )
             fields.append("closed_at=?")
             params.append(TODAY().isoformat())
             recheck = TODAY() + timedelta(days=r["recheck_days"] or 180)
@@ -341,6 +424,91 @@ def cmd_log(args) -> None:
     conn.commit()
 
 
+
+def cmd_listings(args) -> None:
+    """The listings a request is trying to clear, and which are gone."""
+    conn = open_db()
+    db.migrate(conn)
+    r = get_request(conn, args.id)
+    rows = conn.execute(
+        "SELECT * FROM listing WHERE request_id=? ORDER BY id", (args.id,)
+    ).fetchall()
+
+    if args.add:
+        n = add_listings(conn, args.id, args.add)
+        conn.commit()
+        print(f"Added {n} listing(s).")
+        rows = conn.execute(
+            "SELECT * FROM listing WHERE request_id=? ORDER BY id", (args.id,)
+        ).fetchall()
+
+    print(f"#{r['id']}  {r['broker_name']}  [{r['status']}]")
+    if not rows:
+        print("\nNo listings tracked. Search yourself on the site, then:")
+        print(f"  dr listings {args.id} --add <url> --add <url>")
+        print("\nWhy it matters: most forms remove one listing, not one person. "
+              "Without\nthe URLs there is no way to tell a full removal from a "
+              "partial one.")
+        return
+
+    mark = {"present": "up", "removed": "gone", "unknown": "?"}
+    print()
+    print(table(
+        [[i, mark[l["status"]], l["url"][:66], l["resolved_at"] or "", l["note"][:28]]
+         for i, l in enumerate(rows, 1)],
+        ["N", "STATE", "URL", "RESOLVED", "NOTE"],
+    ))
+    t = listing_tally(conn, args.id)
+    print(f"\n{t['removed']}/{t['total']} removed"
+          + (f", {t['unknown']} unknown" if t["unknown"] else ""))
+    if t["removed"] < t["total"]:
+        print(f"Mark one gone:  dr listing {args.id} <N> --status removed")
+
+
+def cmd_listing(args) -> None:
+    """Update one listing, and let the request's status follow from it."""
+    conn = open_db()
+    db.migrate(conn)
+    get_request(conn, args.id)
+    rows = conn.execute(
+        "SELECT * FROM listing WHERE request_id=? ORDER BY id", (args.id,)
+    ).fetchall()
+    if not rows:
+        sys.exit(f"#{args.id} has no listings. Add some with "
+                 f"`dr listings {args.id} --add <url>`.")
+
+    picked = []
+    if args.all:
+        picked = list(rows)
+    else:
+        for n in args.n:
+            if not 1 <= n <= len(rows):
+                sys.exit(f"No listing {n}; #{args.id} has {len(rows)}.")
+            picked.append(rows[n - 1])
+
+    resolved = TODAY().isoformat() if args.status in ("removed", "unknown") else None
+    for l in picked:
+        conn.execute(
+            "UPDATE listing SET status=?, resolved_at=?, note=COALESCE(?, note) "
+            "WHERE id=?",
+            (args.status, resolved, args.note, l["id"]),
+        )
+        log_event(conn, args.id, "note",
+                  f"listing {args.status}: {l['url'][:120]}"
+                  + (f" - {args.note}" if args.note else ""))
+    conn.commit()
+
+    t = listing_tally(conn, args.id)
+    print(f"#{args.id}: {t['removed']}/{t['total']} listing(s) removed.")
+    moved = sync_status_from_listings(conn, args.id)
+    conn.commit()
+    if moved == "completed":
+        print("All listings gone - request marked completed, recheck scheduled.")
+    elif moved == "partial":
+        print("Marked partial: some listings are gone, others are still up.")
+        print("That is the normal broker behaviour - keep the request open.")
+
+
 def cmd_status(args) -> None:
     conn = open_db()
     if args.id:
@@ -350,8 +518,18 @@ def cmd_status(args) -> None:
         print(f"  opened {r['opened_at'] or '-'}   sent {r['sent_at'] or '-'}   due {r['due_at'] or '-'}")
         if r["confirmation"]:
             print(f"  ref {r['confirmation']}")
-        if r["profile_urls"]:
-            print("  listings:")
+        t = listing_tally(conn, args.id)
+        if t["total"]:
+            print(f"  listings: {t['removed']}/{t['total']} removed"
+                  + (f", {t['unknown']} unknown" if t["unknown"] else ""))
+            for l in conn.execute(
+                "SELECT status, url FROM listing WHERE request_id=? ORDER BY id",
+                (args.id,)
+            ):
+                flag = {"present": "up  ", "removed": "gone", "unknown": "?   "}[l["status"]]
+                print(f"    {flag}  {l['url']}")
+        elif r["profile_urls"]:
+            print("  listings (untracked):")
             for u in r["profile_urls"].splitlines():
                 print(f"    {u}")
         evs = conn.execute(
@@ -1142,7 +1320,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status", choices=db.STATUSES)
     p.add_argument("--note")
     p.add_argument("--ref")
+    p.add_argument("--force", action="store_true",
+                   help="complete a request even with listings still up")
     p.set_defaults(func=cmd_log)
+
+    p = sub.add_parser("listings", help="the listings a request is clearing")
+    p.add_argument("id", type=int)
+    p.add_argument("--add", action="append", metavar="URL",
+                   help="track another listing URL (repeatable)")
+    p.set_defaults(func=cmd_listings)
+
+    p = sub.add_parser("listing", help="mark one listing removed / still up")
+    p.add_argument("id", type=int, help="request id")
+    p.add_argument("n", type=int, nargs="*", help="listing number(s) from `dr listings`")
+    p.add_argument("--all", action="store_true", help="every listing on the request")
+    p.add_argument("--status", required=True, choices=db.LISTING_STATUSES)
+    p.add_argument("--note")
+    p.set_defaults(func=cmd_listing)
 
     p = sub.add_parser("status", help="overview, or detail for one request")
     p.add_argument("id", type=int, nargs="?")

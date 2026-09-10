@@ -4,10 +4,12 @@ Current state: **582 brokers**, request generation, deadline tracking, link
 verification, audit log, registry import. 71 tests. Works end to end for a
 single subject.
 
-**Done:** 1 (registry import), 6 (batch session), 12 (packaging), 13 (rate
-limiting + resumable sweeps), `dr history` (audit trail, not originally on
-this list).
-**Next up:** 4 (inbox integration) — now the clear bottleneck.
+**Done:** 1 (registry import), 6 (batch session), 10 (dashboard), 12
+(packaging), 13 (rate limiting + resumable sweeps), 14 (CI), 16 (partial
+removals), `dr history` (audit trail, not originally on this list).
+**Next up:** 4 (inbox integration) — but see the note there: worth running one
+real `dr batch` session first, so the mail parsing is built against real broker
+replies rather than guesses about them.
 
 Ordered by leverage, not by effort. The rationale for each is the part worth
 arguing with — the estimates are guesses.
@@ -199,8 +201,15 @@ output was block-buffered, so an interrupted sweep printed **nothing** despite
 saving its work; and the resume command was rendered 25 lines above the end of
 the summary, where it scrolled away. Both fixed.
 
-### 14. No git repo, no CI
-32 tests that nothing runs automatically. *Effort: S.*
+### ~~14. No git repo, no CI~~ — **done**
+GitHub Actions on push and PR: the suite across Python 3.9/3.11/3.13, plus a
+separate packaging job that builds a wheel, **asserts the broker catalog is
+inside it**, then installs it into a clean venv and runs `dr init` from `/tmp`.
+That last job exists because a wheel once shipped with no catalog at all and
+83 passing tests said nothing about it.
+
+The suite is network-free by design (loopback HTTP server, inline fixtures) and
+CI depends on that staying true.
 
 ### 15. Secrets at rest
 `profile.yaml` is chmod 600 at creation only; the SQLite DB is plaintext and

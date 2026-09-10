@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the floor the package claims; 3.13 catches what is coming.
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . pytest
+
+      - name: Tests
+        # No network in CI: the verify and registry suites use local fixtures
+        # and a loopback HTTP server, and must stay that way.
+        run: pytest -q
+
+  package:
+    # The catalog once built into a wheel that did not contain it. Never again.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build a wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: The wheel must contain the broker catalog
+        run: |
+          python - <<'EOF'
+          import glob, sys, zipfile
+          whl = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(whl).namelist()
+          found = [n for n in names if n.endswith("brokers.yaml")]
+          print(whl, "->", found or "NO CATALOG")
+          sys.exit(0 if found else 1)
+          EOF
+
+      - name: Install from the wheel and run it outside the source tree
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet dist/*.whl
+          cd /tmp
+          DR_HOME=/tmp/drhome /tmp/venv/bin/dr init
+          DR_HOME=/tmp/drhome /tmp/venv/bin/dr brokers --tier 1
+          test -s /tmp/drhome/removal.db

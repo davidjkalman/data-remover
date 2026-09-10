@@ -91,6 +91,28 @@ Deliberate choices:
 - **Only form and account channels appear.** Email-channel brokers are not
   browser work — `dr start <key>` handles those.
 
+## Partial removals
+
+A broker holds several listings for you — usually one per address — and removal
+happens per listing. A broker that clears one of four will tell you the job is
+done. If the tracker believes that, its coverage number is fiction.
+
+```bash
+dr start spokeo --url https://... --url https://...   # track the listings
+dr listings 3                                         # which are still up
+dr listing 3 2 --status removed                       # one of them is gone
+dr listing 3 --all --status removed                   # all of them are
+```
+
+The request's status follows from the listings: some gone is `partial`, all
+gone is `completed` (which also schedules the recheck). `dr log <id> --status
+completed` is **refused** while listings are still up, because that is the exact
+moment the coverage number would start lying — `--force` overrides if you know
+better.
+
+Requests with no tracked listings behave as before. Most brokers never give you
+per-listing URLs, and silence is not evidence.
+
 ## Seeing what happened
 
 Every status change, note, escalation and link-check result is recorded in an

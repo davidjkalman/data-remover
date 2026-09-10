@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_TABLES = """
 CREATE TABLE IF NOT EXISTS broker (
@@ -45,6 +45,20 @@ CREATE TABLE IF NOT EXISTS request (
     recheck_at    TEXT
 );
 
+-- A broker holds several listings for one person - one per address, usually.
+-- Removal happens per listing, and a broker that clears one of four will tell
+-- you the job is done. Tracking only the request overstates coverage.
+CREATE TABLE IF NOT EXISTS listing (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id    INTEGER NOT NULL REFERENCES request(id) ON DELETE CASCADE,
+    url           TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'present',   -- present|removed|unknown
+    added_at      TEXT NOT NULL,
+    resolved_at   TEXT,
+    note          TEXT NOT NULL DEFAULT '',
+    UNIQUE(request_id, url)
+);
+
 CREATE TABLE IF NOT EXISTS event (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id    INTEGER REFERENCES request(id) ON DELETE CASCADE,
@@ -69,6 +83,7 @@ CREATE INDEX IF NOT EXISTS idx_event_at       ON event(at);
 CREATE INDEX IF NOT EXISTS idx_event_broker   ON event(broker_key);
 CREATE INDEX IF NOT EXISTS idx_broker_domain  ON broker(domain);
 CREATE INDEX IF NOT EXISTS idx_broker_source  ON broker(source);
+CREATE INDEX IF NOT EXISTS idx_listing_request ON listing(request_id);
 """
 
 # Kept for callers that want the whole thing at once (tests, docs).
@@ -77,11 +92,14 @@ SCHEMA = SCHEMA_TABLES + SCHEMA_INDEXES
 # A request is open until it reaches one of these.
 TERMINAL = {"completed", "rejected", "not_found"}
 
+LISTING_STATUSES = ["present", "removed", "unknown"]
+
 STATUSES = [
     "pending",              # queued, nothing sent
     "sent",                 # request submitted
     "acknowledged",         # broker confirmed receipt
     "verification_required",# waiting on you: email/SMS/ID
+    "partial",              # some listings gone, others still up
     "completed",            # removed, confirmed
     "rejected",             # refused - candidate for escalation
     "not_found",            # no record of you
@@ -104,6 +122,17 @@ MIGRATIONS = {
     4: [
         "ALTER TABLE broker ADD COLUMN source TEXT NOT NULL DEFAULT 'catalog'",
         "ALTER TABLE broker ADD COLUMN domain TEXT",
+    ],
+    5: [
+        """CREATE TABLE IF NOT EXISTS listing (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id  INTEGER NOT NULL REFERENCES request(id) ON DELETE CASCADE,
+            url         TEXT NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'present',
+            added_at    TEXT NOT NULL,
+            resolved_at TEXT,
+            note        TEXT NOT NULL DEFAULT '',
+            UNIQUE(request_id, url))""",
     ],
 }
 
