@@ -159,9 +159,17 @@ guessing, and it's the only way to measure **stick rate**.
 Cron `dr due` and `dr recheck`, notify on overdue or re-listing. The tool
 already models both; nothing surfaces them unless you type. *Effort: S.*
 
-### 10. HTML/PDF report
-`dr report` is markdown. A dated PDF is what you attach to a complaint or hand
-a lawyer. *Effort: S.*
+### ~~10. HTML dashboard~~ — mostly done
+`dr dashboard` renders a self-contained local HTML page: coverage, a
+severity-striped attention list with the command to fix each item, the request
+table, tier coverage, and link health. No network, no CDN - it describes what
+you want deleted, so it does not phone anywhere.
+
+Deliberately excludes the profile's addresses, phones and emails. Shows an
+"example data" banner while the profile is still the template, so sample
+figures can never be mistaken for a real campaign.
+
+Still open: **PDF export** for attaching to a regulator complaint.
 
 ### 11. Multi-subject
 Household members, or relatives whose listings make you findable. Schema is

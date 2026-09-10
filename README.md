@@ -33,6 +33,27 @@ dr report --out out.md   # a paper trail
 
 `dr status` at any time for the board; `dr status 3` for one request's history.
 
+## Dashboard
+
+```bash
+dr dashboard --open
+```
+
+Writes a single self-contained HTML file (`~/.dataremoval/dashboard.html`) and
+opens it. No network, no CDN, no telemetry - it renders on a laptop that has
+never been online, which matters for a page describing what you are trying to
+get deleted.
+
+It leads with what needs action rather than what exists: coverage and confirmed
+removals up top, then a severity-striped list of anything overdue, refused,
+re-listed or waiting on you to click a verification link - each with the exact
+command to deal with it. Then the full request table, coverage by tier, and
+link health from the last `dr verify` sweep.
+
+**Your address history, phone numbers and email addresses are deliberately not
+on the page.** It answers "how is this going", and it does not need them to do
+that. Regenerate it any time; it is derived entirely from the database.
+
 ## Working through forms: `dr batch`
 
 The reason DIY removal fails is not that any single form is hard. It is that

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import json
 import shutil
 import sqlite3
 import subprocess
@@ -13,7 +14,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
-from . import catalog, db, laws, registry, templates, verify
+from . import catalog, dashboard, db, laws, registry, templates, verify
 from .profile import Profile, summary, write_template
 
 HOME = Path(os.environ.get("DR_HOME", Path.home() / ".dataremoval"))
@@ -1035,6 +1036,28 @@ def cmd_broker_set(args) -> None:
         print("Tip: also mark it checked -> dr broker-set", args.broker, "url_verified 1")
 
 
+
+def cmd_dashboard(args) -> None:
+    """Render progress as a single self-contained HTML file."""
+    conn = open_db()
+    db.migrate(conn)
+    p = Profile.load(PROFILE_PATH)
+    data = dashboard.collect(conn, p)
+    out = Path(args.out) if args.out else HOME / "dashboard.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(dashboard.render(data), encoding="utf-8")
+
+    t = data["totals"]
+    print(f"{out}")
+    print(f"  {t['brokers']} brokers   {t['reached']} reached   "
+          f"{t['removed']} removed   {t['overdue']} overdue   {t['blocked']} blocked")
+    if args.json:
+        Path(args.json).write_text(json.dumps(data, indent=2), encoding="utf-8")
+        print(f"  data: {args.json}")
+    if args.open:
+        webbrowser.open(out.resolve().as_uri())
+
+
 def cmd_report(args) -> None:
     conn = open_db()
     p = Profile.load(PROFILE_PATH)
@@ -1205,6 +1228,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("field")
     p.add_argument("value")
     p.set_defaults(func=cmd_broker_set)
+
+    p = sub.add_parser("dashboard", help="render progress as a local HTML page")
+    p.add_argument("--out", help="output path (default ~/.dataremoval/dashboard.html)")
+    p.add_argument("--json", help="also write the underlying data as JSON")
+    p.add_argument("--open", action="store_true", help="open it in a browser")
+    p.set_defaults(func=cmd_dashboard)
 
     p = sub.add_parser("report", help="markdown status report")
     p.add_argument("--out")
