@@ -1,0 +1,14 @@
+# Never commit these: the whole point is that this data stays yours.
+profile.yaml
+*.db
+*.sqlite3
+reports/
+
+# Build and tooling artifacts
+.venv/
+__pycache__/
+*.egg-info/
+build/
+dist/
+*.whl
+.pytest_cache/

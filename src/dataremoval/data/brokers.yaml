@@ -1,0 +1,474 @@
+# Data broker catalog.
+#
+# Fields:
+#   key        - stable slug, used by the CLI
+#   name       - display name
+#   tier       - 1 = high impact (large index, feeds other sites), 2 = common, 3 = long tail
+#   method     - form | email | account | mail   (primary removal channel)
+#   optout_url - opt-out page (NOT the search page)
+#   email      - privacy contact for statutory requests
+#   requires   - hurdles you will hit: captcha, email_verify, sms_verify, id_upload, account, notarized
+#   recheck_days - how often this one tends to re-list you
+#   feeds      - other catalog keys that source data from this one; kill the parent first
+#   notes      - anything that trips people up
+#
+# verified: false means the URL is from prior knowledge and has NOT been checked
+# by this tool against the live site. Run `dr verify` to walk them.
+
+brokers:
+  # ---------- Tier 1: the aggregators everyone else copies ----------
+  - key: acxiom
+    name: Acxiom (LiveRamp)
+    tier: 1
+    method: form
+    optout_url: https://isapps.acxiom.com/optout/optout.aspx
+    email: privacy@acxiom.com
+    requires: [email_verify]
+    recheck_days: 365
+    notes: >
+      Wholesale supplier to marketing databases. Removing here reduces downstream
+      re-listing more than any single people-search site.
+
+  - key: lexisnexis
+    name: LexisNexis Risk Solutions
+    tier: 1
+    method: form
+    optout_url: https://optout.lexisnexis.com/
+    email: privacy.information.manager@lexisnexis.com
+    requires: [id_upload]
+    recheck_days: 365
+    notes: >
+      FCRA-regulated. You have a right to your full consumer file (free) as well
+      as suppression. Ask for the file first - it shows what they actually hold.
+
+  - key: epsilon
+    name: Epsilon (Publicis)
+    tier: 1
+    method: email
+    optout_url: https://legal.epsilon.com/global-privacy-policies
+    email: privacy@epsilon.com
+    requires: []
+    recheck_days: 365
+
+  - key: oracle-datacloud
+    name: Oracle Data Cloud / Advertising
+    tier: 1
+    method: email
+    optout_url: https://www.oracle.com/legal/privacy/privacy-choices/
+    email: privacy_ww@oracle.com
+    requires: []
+    recheck_days: 730
+    notes: Oracle wound down its ad data business in 2024; request confirmation of deletion of legacy records.
+
+  - key: thomson-reuters-clear
+    name: Thomson Reuters CLEAR
+    tier: 1
+    method: form
+    optout_url: https://www.thomsonreuters.com/en/privacy-statement
+    email: privacy.issues@thomsonreuters.com
+    requires: [id_upload]
+    recheck_days: 365
+    notes: >
+      The CLEAR opt-out sits behind a rotating privacy-portal link that a link
+      check cannot resolve. Email is the reliable channel here.
+
+  - key: corelogic
+    name: CoreLogic
+    tier: 1
+    method: email
+    optout_url: https://www.cotality.com/legal/privacy-policy
+    email: privacy@corelogic.com
+    requires: []
+    recheck_days: 365
+    notes: >
+      CoreLogic rebranded to Cotality in 2025 and the old privacy-center URL now
+      404s. The linked policy page is a placeholder - the live request form was
+      not locatable by link check. Use the email channel, or find the current
+      form and fix this with `dr broker-set`.
+
+  # ---------- Tier 1: people-search with the widest reach ----------
+  - key: spokeo
+    name: Spokeo
+    tier: 1
+    method: form
+    optout_url: https://www.spokeo.com/optout
+    email: privacy@spokeo.com
+    requires: [email_verify]
+    recheck_days: 180
+    notes: Need the exact profile URL. Search yourself first, copy each listing URL - there are usually several.
+
+  - key: whitepages
+    name: Whitepages
+    tier: 1
+    method: form
+    optout_url: https://www.whitepages.com/suppression-requests
+    email: support@whitepages.com
+    requires: [sms_verify]
+    recheck_days: 180
+    notes: Phone call/SMS verification. Feeds many smaller sites.
+
+  - key: beenverified
+    name: BeenVerified
+    tier: 1
+    method: form
+    optout_url: https://www.beenverified.com/app/optout/search
+    email: privacy@beenverified.com
+    requires: [email_verify]
+    recheck_days: 180
+    feeds: [peoplelooker, neighborwho, ownerly]
+
+  - key: intelius
+    name: Intelius
+    tier: 1
+    method: form
+    optout_url: https://suppression.peopleconnect.us/optout
+    email: privacy@intelius.com
+    requires: [email_verify]
+    recheck_days: 180
+    feeds: [ussearch, peoplelookup, zabasearch]
+    notes: >
+      PeopleConnect brand. Intelius, TruthFinder, Instant Checkmate and US Search
+      all submit through suppression.peopleconnect.us - one submission there is
+      reported to cover the group, but confirm each brand separately: they have
+      been observed removing one and not the others.
+
+  - key: peoplefinders
+    name: PeopleFinders
+    tier: 1
+    method: form
+    optout_url: https://www.peoplefinders.com/opt-out
+    email: privacy@peoplefinders.com
+    requires: [email_verify]
+    recheck_days: 180
+
+  - key: radaris
+    name: Radaris
+    tier: 1
+    method: account
+    optout_url: https://radaris.com/control/privacy
+    email: support@radaris.com
+    requires: [account, email_verify, sms_verify]
+    recheck_days: 90
+    notes: >
+      Notoriously sticky. Requires claiming the profile. Re-lists often -
+      short recheck interval on purpose.
+
+  - key: mylife
+    name: MyLife
+    tier: 1
+    method: email
+    optout_url: https://www.mylife.com/ccpa/index.pubview
+    email: privacy@mylife.com
+    requires: []
+    recheck_days: 180
+    notes: Form is unreliable; email tends to work better. Include the profile URL.
+
+  - key: truepeoplesearch
+    name: TruePeopleSearch
+    tier: 1
+    method: form
+    optout_url: https://www.truepeoplesearch.com/removal
+    email: privacy@truepeoplesearch.com
+    requires: [email_verify, captcha]
+    recheck_days: 120
+
+  - key: fastpeoplesearch
+    name: FastPeopleSearch
+    tier: 1
+    method: form
+    optout_url: https://www.fastpeoplesearch.com/removal
+    email: privacy@fastpeoplesearch.com
+    requires: [email_verify, captcha]
+    recheck_days: 120
+
+  - key: truthfinder
+    name: TruthFinder
+    tier: 1
+    method: form
+    optout_url: https://suppression.peopleconnect.us/optout
+    email: privacy@truthfinder.com
+    requires: [email_verify]
+    recheck_days: 180
+
+  - key: instantcheckmate
+    name: Instant Checkmate
+    tier: 1
+    method: form
+    optout_url: https://suppression.peopleconnect.us/optout
+    email: privacy@instantcheckmate.com
+    requires: [email_verify]
+    recheck_days: 180
+
+  # ---------- Tier 2 ----------
+  - key: peekyou
+    name: PeekYou
+    tier: 2
+    method: form
+    optout_url: https://www.peekyou.com/about/contact/optout/
+    email: support@peekyou.com
+    requires: [captcha]
+    recheck_days: 365
+
+  - key: thatsthem
+    name: ThatsThem
+    tier: 2
+    method: form
+    optout_url: https://thatsthem.com/optout
+    email: privacy@thatsthem.com
+    requires: [email_verify]
+    recheck_days: 180
+
+  - key: nuwber
+    name: Nuwber
+    tier: 2
+    method: form
+    optout_url: https://nuwber.com/removal/link
+    email: support@nuwber.com
+    requires: [email_verify]
+    recheck_days: 180
+
+  - key: clustrmaps
+    name: ClustrMaps
+    tier: 2
+    method: form
+    optout_url: https://clustrmaps.com/bl/opt-out
+    email: privacy@clustrmaps.com
+    requires: []
+    recheck_days: 180
+    notes: Publishes home address with map. High-priority if physical safety is a concern.
+
+  - key: familytreenow
+    name: FamilyTreeNow
+    tier: 2
+    method: form
+    optout_url: https://www.familytreenow.com/optout
+    email: privacy@familytreenow.com
+    requires: []
+    recheck_days: 180
+    notes: Exposes relatives and past addresses. No email verification - fast win.
+
+  - key: zabasearch
+    name: ZabaSearch
+    tier: 2
+    method: form
+    optout_url: https://www.zabasearch.com/block_records/
+    email: privacy@intelius.com
+    requires: [captcha]
+    recheck_days: 180
+
+  - key: ussearch
+    name: US Search
+    tier: 2
+    method: form
+    optout_url: https://suppression.peopleconnect.us/optout
+    email: privacy@ussearch.com
+    requires: [email_verify]
+    recheck_days: 180
+
+  - key: searchpeoplefree
+    name: SearchPeopleFree
+    tier: 2
+    method: form
+    optout_url: https://www.searchpeoplefree.com/opt-out
+    email: privacy@searchpeoplefree.com
+    requires: [email_verify]
+    recheck_days: 120
+
+  - key: cyberbackgroundchecks
+    name: CyberBackgroundChecks
+    tier: 2
+    method: form
+    optout_url: https://www.cyberbackgroundchecks.com/removal
+    email: privacy@cyberbackgroundchecks.com
+    requires: [email_verify]
+    recheck_days: 120
+
+  - key: smartbackgroundchecks
+    name: SmartBackgroundChecks
+    tier: 2
+    method: form
+    optout_url: https://www.smartbackgroundchecks.com/optout
+    email: privacy@smartbackgroundchecks.com
+    requires: [email_verify]
+    recheck_days: 120
+
+  - key: advancedbackgroundchecks
+    name: Advanced Background Checks
+    tier: 2
+    method: form
+    optout_url: https://www.advancedbackgroundchecks.com/removal
+    email: privacy@advancedbackgroundchecks.com
+    requires: [email_verify]
+    recheck_days: 120
+
+  - key: infotracer
+    name: InfoTracer
+    tier: 2
+    method: form
+    optout_url: https://infotracer.com/optout/
+    email: privacy@infotracer.com
+    requires: [email_verify]
+    recheck_days: 180
+
+  - key: socialcatfish
+    name: Social Catfish
+    tier: 2
+    method: form
+    optout_url: https://socialcatfish.com/opt-out/
+    email: privacy@socialcatfish.com
+    requires: [email_verify]
+    recheck_days: 365
+
+  - key: publicrecordsnow
+    name: PublicRecordsNow
+    tier: 2
+    method: form
+    optout_url: https://www.publicrecordsnow.com/optout/
+    email: privacy@publicrecordsnow.com
+    requires: []
+    recheck_days: 180
+    notes: >
+      Opt-out path redirect-loops as of 2026-09-09 and the www/non-www pair
+      bounces to the site root. Use the email channel.
+
+  - key: peoplelooker
+    name: PeopleLooker
+    tier: 2
+    method: form
+    optout_url: https://www.peoplelooker.com/optout
+    email: privacy@peoplelooker.com
+    requires: [email_verify]
+    recheck_days: 180
+
+  - key: ownerly
+    name: Ownerly
+    tier: 2
+    method: form
+    optout_url: https://www.ownerly.com/optout
+    email: privacy@ownerly.com
+    requires: [email_verify]
+    recheck_days: 180
+
+  - key: neighborwho
+    name: NeighborWho
+    tier: 2
+    method: form
+    optout_url: https://www.neighborwho.com/optout
+    email: privacy@neighborwho.com
+    requires: [email_verify]
+    recheck_days: 180
+
+  - key: voterrecords
+    name: VoterRecords
+    tier: 2
+    method: form
+    optout_url: https://voterrecords.com/optout
+    email: privacy@voterrecords.com
+    requires: []
+    recheck_days: 365
+    notes: Sources from state voter rolls. Also ask your county registrar about confidential-voter status.
+
+  - key: homemetry
+    name: Homemetry
+    tier: 3
+    method: email
+    optout_url: https://homemetry.com/optout
+    email: support@homemetry.com
+    requires: []
+    recheck_days: 365
+
+  - key: neighborreport
+    name: Neighbor.report
+    tier: 3
+    method: form
+    optout_url: https://neighbor.report/remove
+    email: support@neighbor.report
+    requires: []
+    recheck_days: 365
+
+  - key: officialusa
+    name: OfficialUSA
+    tier: 3
+    method: email
+    optout_url: https://officialusa.com/
+    email: info@officialusa.com
+    requires: []
+    recheck_days: 365
+
+  - key: privateeye
+    name: PrivateEye
+    tier: 3
+    method: form
+    optout_url: https://privateeye.com/removal
+    email: privacy@privateeye.com
+    requires: []
+    recheck_days: 365
+    notes: >
+      Removal page is JS-rendered, so a link check cannot confirm it. Open it in
+      a browser before assuming it works.
+
+  - key: checkpeople
+    name: CheckPeople
+    tier: 3
+    method: form
+    optout_url: https://www.checkpeople.com/opt-out
+    email: privacy@checkpeople.com
+    requires: [email_verify]
+    recheck_days: 180
+
+  - key: addresses
+    name: Addresses.com
+    tier: 3
+    method: form
+    optout_url: https://www.addresses.com/optout.php
+    email: privacy@addresses.com
+    requires: []
+    recheck_days: 365
+
+  - key: anywho
+    name: AnyWho
+    tier: 3
+    method: form
+    optout_url: https://www.spokeo.com/optout
+    email: privacy@spokeo.com
+    requires: [email_verify]
+    recheck_days: 365
+    notes: >
+      AnyWho now redirects to Spokeo's opt-out - same company, same form. If you
+      have already cleared spokeo, this is done; verify rather than resubmit.
+
+  # ---------- Marketing / credit suppression (free, high leverage) ----------
+  - key: optoutprescreen
+    name: OptOutPrescreen (credit bureaus)
+    tier: 1
+    method: form
+    optout_url: https://www.optoutprescreen.com/
+    email: null
+    requires: []
+    recheck_days: 1825
+    notes: >
+      Official joint bureau site. Online = 5 years; the mailed form = permanent.
+      Stops prescreened credit/insurance offers, which are a major mail-data leak.
+
+  - key: dmachoice
+    name: DMAchoice (ANA)
+    tier: 2
+    method: account
+    optout_url: https://www.dmachoice.org/
+    email: null
+    requires: [account]
+    recheck_days: 1095
+    notes: Small processing fee. Covers a large slice of direct-mail list rental.
+
+  - key: ca-drop
+    name: California DROP (DELETE Act)
+    tier: 1
+    method: account
+    optout_url: https://cppa.ca.gov/
+    email: null
+    requires: [account, id_upload]
+    recheck_days: 365
+    notes: >
+      California's one-stop deletion mechanism. Registered brokers must check the
+      list and honor deletions on a recurring basis. CA residents: do this first,
+      it does the most work per unit of effort.

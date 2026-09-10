@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dataremoval"
+version = "0.1.0"
+description = "Personal data-broker removal tracker: request generation, deadline enforcement, re-listing checks."
+requires-python = ">=3.9"
+dependencies = ["PyYAML>=6.0"]
+
+[project.scripts]
+dr = "dataremoval.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+dataremoval = ["data/*.yaml"]
