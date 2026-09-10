@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sqlite3
+import subprocess
 import sys
 import webbrowser
 from datetime import date, datetime, timedelta
@@ -560,6 +562,178 @@ def cmd_postpone(args) -> None:
     print(f"#{args.id} {r['broker_name']}: next recheck {nxt.isoformat()}")
 
 
+
+def copy_to_clipboard(text: str) -> Optional[str]:
+    """Best-effort clipboard. Returns the tool used, or None."""
+    for cmd in (["pbcopy"], ["xclip", "-selection", "clipboard"], ["wl-copy"]):
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            subprocess.run(cmd, input=text.encode(), check=True)
+            return cmd[0]
+        except (OSError, subprocess.CalledProcessError):
+            continue
+    return None
+
+
+BATCH_KEYS = """
+  [enter] submitted it        s  skip for now
+  b       blocked (ID/captcha wall)   e  use the email channel instead
+  c       re-copy the crib sheet      o  re-open the page
+  q       stop here
+"""
+
+
+def cmd_batch(args) -> None:
+    """Work through opt-out forms one at a time, in a real browser.
+
+    No automation: the browser is yours, the captcha is yours, the submit
+    button is yours. What this removes is the part that actually makes people
+    quit - looking up the URL, retyping the same twelve fields, and remembering
+    which of forty sites you already did.
+    """
+    conn = open_db()
+    db.migrate(conn)
+    p = load_profile()
+    law = law_for(p)
+
+    sql = (
+        "SELECT b.* FROM broker b WHERE b.active = 1 "
+        "AND b.optout_url IS NOT NULL AND b.method IN ('form','account') "
+        # Anything with a live request is already in flight.
+        "AND NOT EXISTS (SELECT 1 FROM request r WHERE r.broker_key = b.key "
+        "                AND r.status NOT IN ('completed','rejected','not_found'))"
+    )
+    params: List = []
+    if not args.include_dead:
+        sql += " AND COALESCE(b.verify_status,'') NOT IN ('notfound','soft404')"
+    if args.tier:
+        sql += " AND b.tier = ?"
+        params.append(args.tier)
+    if args.source:
+        sql += " AND b.source = ?"
+        params.append(args.source)
+    sql += " ORDER BY b.tier, b.name"
+    rows = conn.execute(sql, params).fetchall()
+
+    # Same leverage ordering as `dr queue`: tier, then fewest hurdles.
+    rows = sorted(rows, key=lambda r: (r["tier"],
+                                       len([x for x in (r["requires"] or "").split(",") if x])))
+    todo = rows[: args.limit or 10]
+
+    if not todo:
+        print("Nothing queued for a browser session.")
+        print("Everything openable is either in flight, done, or a known dead link.")
+        print("  dr queue                  # what is left overall")
+        print("  dr batch --include-dead   # include links verify flagged as gone")
+        return
+
+    print(f"{len(todo)} site(s) this session (of {len(rows)} available)  [{law.name}]")
+    print("Each one: crib sheet on your clipboard, page in your browser, you submit.")
+    if not args.dry_run:
+        print(BATCH_KEYS)
+
+    if args.dry_run or not sys.stdin.isatty():
+        if not args.dry_run:
+            print("\n(stdin is not a terminal - showing the plan only)")
+        print(table([[r["key"], r["name"][:32], r["tier"], r["requires"] or "none",
+                      r["verify_status"] or "?"] for r in todo],
+                    ["KEY", "NAME", "T", "HURDLES", "URL"]))
+        return
+
+    done = {"sent": 0, "blocked": 0, "skipped": 0, "email": 0}
+    for i, b in enumerate(todo, 1):
+        crib = templates.form_crib(p, b["name"], law)
+        print("\n" + "=" * 68)
+        print(f"[{i}/{len(todo)}]  {b['name']}   (tier {b['tier']})")
+        if b["notes"]:
+            print(f"  note:    {' '.join(b['notes'].split())[:220]}")
+        if b["requires"]:
+            print(f"  hurdles: {b['requires']}")
+        if b["verify_status"] and b["verify_status"] != "ok":
+            print(f"  warning: last link check said {b['verify_status']}")
+        print(f"  url:     {b['optout_url']}")
+
+        clip = copy_to_clipboard(crib)
+        if clip:
+            print(f"  crib sheet copied to clipboard ({clip})")
+        else:
+            print(crib)
+        webbrowser.open(b["optout_url"])
+
+        while True:
+            try:
+                choice = input("  > ").strip().lower()
+            except EOFError:
+                choice = "q"
+
+            if choice in ("", "y", "yes"):
+                rid = _open_request(conn, b, law, args.channel or b["method"])
+                cmd_sent(argparse.Namespace(id=rid, on=None, ref=None))
+                done["sent"] += 1
+                break
+            if choice == "s":
+                done["skipped"] += 1
+                break
+            if choice == "b":
+                rid = _open_request(conn, b, law, b["method"])
+                note = input("  what wall? ").strip() or "blocked at the form"
+                cmd_log(argparse.Namespace(id=rid, status="blocked", note=note, ref=None))
+                done["blocked"] += 1
+                break
+            if choice == "e":
+                if not b["email"]:
+                    print("  no privacy email on file for this one.")
+                    continue
+                rid = _open_request(conn, b, law, "email")
+                print(f"\n  Send to: {b['email']}\n")
+                print(templates.deletion_request(p, law, b["name"]))
+                if copy_to_clipboard(templates.deletion_request(p, law, b["name"])):
+                    print("  (letter copied to clipboard)")
+                print(f"  mark it sent with:  dr sent {rid}")
+                done["email"] += 1
+                break
+            if choice == "c":
+                clip = copy_to_clipboard(crib)
+                print(f"  copied again ({clip})" if clip else crib)
+                continue
+            if choice == "o":
+                webbrowser.open(b["optout_url"])
+                continue
+            if choice == "q":
+                print("\nStopped.")
+                _batch_summary(conn, done)
+                return
+            print("  ? " + " ".join(BATCH_KEYS.split()))
+
+    _batch_summary(conn, done)
+
+
+def _open_request(conn: sqlite3.Connection, broker, law, channel: str) -> int:
+    cur = conn.execute(
+        "INSERT INTO request(broker_key, status, law, channel, opened_at) "
+        "VALUES(?,?,?,?,?)",
+        (broker["key"], "pending", law.key, channel, TODAY().isoformat()),
+    )
+    rid = cur.lastrowid
+    log_event(conn, rid, "status", f"pending (batch session, {channel})")
+    conn.commit()
+    return rid
+
+
+def _batch_summary(conn: sqlite3.Connection, done: Dict[str, int]) -> None:
+    print("\n" + "=" * 68)
+    print("  ".join(f"{k}: {v}" for k, v in done.items() if v))
+    total = conn.execute("SELECT COUNT(*) c FROM broker WHERE active=1").fetchone()["c"]
+    sent = conn.execute(
+        "SELECT COUNT(DISTINCT broker_key) c FROM request WHERE sent_at IS NOT NULL"
+    ).fetchone()["c"]
+    print(f"Reached {sent} of {total} brokers.")
+    if done.get("sent"):
+        print("Deadlines are running now:  dr due")
+    print("Next session:  dr batch")
+
+
 def cmd_open(args) -> None:
     conn = open_db()
     b = get_broker(conn, args.broker)
@@ -978,6 +1152,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id", type=int)
     p.add_argument("--days", type=int)
     p.set_defaults(func=cmd_postpone)
+
+    p = sub.add_parser("batch", help="work through opt-out forms in a browser session")
+    p.add_argument("--limit", type=int, help="how many this session (default 10)")
+    p.add_argument("--tier", type=int, choices=[1, 2, 3])
+    p.add_argument("--source", help="catalog | ca-registry")
+    p.add_argument("--channel", choices=["form", "account"])
+    p.add_argument("--include-dead", action="store_true", dest="include_dead",
+                   help="also offer links verify flagged notfound/soft404")
+    p.add_argument("--dry-run", action="store_true", dest="dry_run",
+                   help="list the session without opening anything")
+    p.set_defaults(func=cmd_batch)
 
     p = sub.add_parser("open", help="open a broker's opt-out page")
     p.add_argument("broker")

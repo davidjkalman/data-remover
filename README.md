@@ -33,6 +33,43 @@ dr report --out out.md   # a paper trail
 
 `dr status` at any time for the board; `dr status 3` for one request's history.
 
+## Working through forms: `dr batch`
+
+The reason DIY removal fails is not that any single form is hard. It is that
+there are forty of them, each wanting the same twelve fields, and you lose
+track of which you have done. `dr batch` is a session for that:
+
+```bash
+dr batch --tier 1        # the aggregators first
+dr batch --dry-run       # see the session without opening anything
+```
+
+For each site it copies the crib sheet to your clipboard, opens the page in
+your browser, and waits:
+
+```
+  [enter] submitted it        s  skip for now
+  b       blocked (ID/captcha wall)   e  use the email channel instead
+  c       re-copy the crib sheet      o  re-open the page
+  q       stop here
+```
+
+No automation. The browser is yours, the captcha is yours, the submit button is
+yours — what disappears is the lookup, the retyping and the remembering.
+Pressing enter starts the statutory clock; `b` records the wall you hit; `e`
+prints the letter instead for sites that want ID you would rather not upload.
+
+Deliberate choices:
+
+- **Skipping records nothing.** A phantom pending request would hide the site
+  from your next session.
+- **Sites already in flight are never offered again**, so you can run this
+  repeatedly without duplicating work.
+- **Known-dead links are excluded** (whatever `dr verify` flagged
+  `notfound`/`soft404`); `--include-dead` overrides.
+- **Only form and account channels appear.** Email-channel brokers are not
+  browser work — `dr start <key>` handles those.
+
 ## Seeing what happened
 
 Every status change, note, escalation and link-check result is recorded in an

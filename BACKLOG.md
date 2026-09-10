@@ -4,9 +4,10 @@ Current state: **582 brokers**, request generation, deadline tracking, link
 verification, audit log, registry import. 71 tests. Works end to end for a
 single subject.
 
-**Done:** 1 (registry import), 12 (packaging), 13 (rate limiting + resumable
-sweeps), `dr history` (audit trail, not originally on this list).
-**Next up:** 4 (inbox integration) or 6 (`dr open --batch`) — see below.
+**Done:** 1 (registry import), 6 (batch session), 12 (packaging), 13 (rate
+limiting + resumable sweeps), `dr history` (audit trail, not originally on
+this list).
+**Next up:** 4 (inbox integration) — now the clear bottleneck.
 
 Ordered by leverage, not by effort. The rationale for each is the part worth
 arguing with — the estimates are guesses.
@@ -118,11 +119,17 @@ request; teach `dr escalate` to assemble a complaint pack.
 18 of 45 tier-1 sites answer `botwall`. At 549 brokers that fraction is the
 single largest blocker to actually finishing.
 
-### 6. `dr open --batch` — the 80/20
-Open the next N opt-out forms in real browser tabs, crib sheet on the
-clipboard, `dr sent` prompts as you go. No automation, no fragility, turns a
-40-site slog into a session. **Do this before 7.**
-*Effort: S.*
+### ~~6. the 80/20 batch session~~ — **done**
+Shipped as `dr batch` rather than `dr open --batch`: it creates requests,
+prompts, and logs, which is a different animal from the one-shot `dr open`.
+
+One design call worth recording: **skipping records nothing.** The obvious
+implementation creates a pending request per site offered, but a phantom
+pending request makes the site invisible to the next session - the exact
+failure the command exists to prevent. Requests are created only when you act.
+
+Also excludes sites already in flight and links `dr verify` flagged as dead,
+so it can be re-run without duplicating work. 12 tests.
 
 ### 7. Playwright-assisted submission
 Drive the form in a real browser, prefill from the profile, **stop at the
